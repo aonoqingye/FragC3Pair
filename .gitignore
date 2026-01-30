@@ -1,0 +1,21 @@
+# python cache
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# env
+.venv/
+venv/
+.env
+.conda/
+
+# ide
+.idea/
+*.idea
+.vscode/
+
+# do NOT sync heavy artifacts
+datas/processed/
+results/
+summary/
+saves/
