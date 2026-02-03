@@ -289,6 +289,8 @@ def main():
                      desc=f"{args.folds}-Fold CV", position=0, leave=True, **TQDM_KW)
 
     for fold, (trainval_idx, test_idx) in fold_iter:
+        if fold > 0:
+            break  # 只跑第 0 折
         # 内层：再从 trainval 中“按组留出”验证集
         if args.groups != "none":
             gss = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=args.seed + fold)
@@ -489,9 +491,9 @@ def parse_args():
     """统一管理可调超参数与配置。"""
     p = argparse.ArgumentParser(description="Two-drug graph training & evaluation (K-fold) with tqdm")
     # 训练/评估超参数
-    p.add_argument("--train_batch_size", type=int, default=512, help="训练批大小")
-    p.add_argument("--test_batch_size", type=int, default=512, help="测试批大小")
-    p.add_argument("--lr", type=float, default=1e-4, help="学习率")
+    p.add_argument("--train_batch_size", type=int, default=1024, help="训练批大小")
+    p.add_argument("--test_batch_size", type=int, default=1024, help="测试批大小")
+    p.add_argument("--lr", type=float, default=2e-4, help="学习率")
     p.add_argument("--epochs", type=int, default=100, help="训练轮数")
     p.add_argument("--early_stopping", type=int, default=20, help="early stopping patience")
     p.add_argument("--log_interval", type=int, default=20, help="训练日志打印间隔（按 batch）")
@@ -500,11 +502,11 @@ def parse_args():
     p.add_argument("--groups", type=str, default="Drug", choices=["Cell", "Drug", "none"], help="分组依据")
     # 模型参数
     p.add_argument("--hidden", type=int, default=300, help="隐层维度")
-    p.add_argument("--encoder", type=str, default="PRODeepSyn",
+    p.add_argument("--encoder", type=str, default="FragC3",
                    choices=["FragC3", "SDDS", "MultiSyn", "AttenSyn", "PRODeepSyn",
                             "DeepDDS_GCN", "DeepDDS_GAT", "MatchMaker", "GCN", "GAT"])
     p.add_argument("--dropout", type=float, default=0.1)
-    p.add_argument("--frag_list", nargs="+", default=["brics", "fg", "murcko"],
+    p.add_argument("--frag_list", nargs="+", default=["brics", "fg"],
                    help='"brics", "fg", "murcko"')
     p.add_argument("--frag_agg", type=str, default="cell_attn",
                    choices=["mlp", "gate", "cell_attn"], help="多视角融合机制")
