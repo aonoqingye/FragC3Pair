@@ -1,6 +1,7 @@
 #!/bin/bash
 
 set -euo pipefail
+unset LD_LIBRARY_PATH
 
 SESSION="gpu2"
 WORKDIR="${WORKDIR:-$PWD}"
@@ -11,9 +12,8 @@ CMD1='python train_final.py --dataset ONeil --groups Drug'
 # CMD2='python train_final.py --dataset ONeil --groups Cell'
 # CMD3='python train_final.py --dataset ONeil --groups Drug --train_batch_size 256'
 
-# 如果你需要激活环境，把 ACTIVATE 改成对应命令；不需要就留空
-# 例：ACTIVATE='source /hpc2ssd/softwares/anaconda3/bin/activate pytorch_gpu_2.0.1 && conda activate EGNN'
-ACTIVATE='conda activate fragc3 && export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"'
+# ACTIVATE='conda activate fragc3 && export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"'
+ACTIVATE='source /home/kimi/miniconda3/etc/profile.d/conda.sh && conda activate fragc3'
 
 # 如果 session 已存在，直接提示并 attach（避免重复起）
 if tmux has-session -t "$SESSION" 2>/dev/null; then

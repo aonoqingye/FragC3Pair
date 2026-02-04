@@ -270,8 +270,9 @@ def _merge_param_single(args, sweep_values):
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
+    p.add_argument("--train_batch_size", type=int, default=512, help="训练批大小")
     p.add_argument("--folds", type=int, default=5, help="随机划分折数（默认 5）")
-    p.add_argument("--groups", type=str, default="Drug", choices=["Cell", "Drug", "none"], help="分组依据")
+    p.add_argument("--groups", type=str, default="Cell", choices=["Cell", "Drug", "none"], help="分组依据")
     # 模型参数
     p.add_argument("--hidden", type=int, default=300, help="隐层维度")
     p.add_argument("--encoder", type=str, default="FragC3",
@@ -293,7 +294,7 @@ if __name__ == "__main__":
     p.add_argument("--heads", type=int, default=2, help="注意力头数")
     p.add_argument("--ffn_expansion", type=int, default=8, help="FFN扩张倍数")
     # p.add_argument("--cell_hid", type=int, default=512)
-    p.add_argument("--cell_agg", type=int, default=512)
+    p.add_argument("--cell_agg", type=int, default=256)
     p.add_argument("--cell_pred", type=int, default=128)
     p.add_argument("--Lc", type=int, default=32)
     # 数据与设备
@@ -303,6 +304,10 @@ if __name__ == "__main__":
     args = p.parse_args()
 
     out_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'results')
+    out_info = (f'{args.dataset}_Group{args.groups}_Frags{"_".join(args.frag_list)}'
+                f'Batch{args.train_batch_size}_Tri{args.tri_variant}_CV{args.cv_mode}_Lc{args.Lc}'
+                f'_H{args.heads}_FFN{args.ffn_expansion}_CA{args.cell_agg}_CP{args.cell_pred}')
+    process_folds(args, out_dir, out_info)
     # sweep = [0.0, 0.05, 0.1, 0.15, 0.2]
     # sweep = [1, 2, 3, 4, 5, 6, 7, 8]
     sweep = [32, 64, 128, 256, 512]
@@ -314,4 +319,4 @@ if __name__ == "__main__":
     # sweep = list(itertools.product(CA, CP))  # 12 combos: (tri, cvm)
 
     # _merge_param_comb(args, sweep)
-    _merge_param_single(args, sweep)
+    # _merge_param_single(args, sweep)
