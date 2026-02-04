@@ -1,86 +1,61 @@
-#!/usr/bin/env bash
+#!/bin/bash
+
 set -euo pipefail
 
-# =========================
-# 可直接改的参数区（你只改这里）
-# =========================
 SESSION="gpu4"
+WORKDIR="${WORKDIR:-$PWD}"
 
-CMD0='python train_final.py --dataset ONeil --group none --encoder FragC3'
-CMD1='python train_final.py --dataset ONeil --group Drug --encoder FragC3'
-CMD2='python train_final.py --dataset ONeil --group Cell --encoder FragC3'
-CMD3='python train_final.py --dataset ONeil --group Drug --encoder FragC3 --train_batch_size 256'
+# 下面四条命令改成你自己的脚本/参数（也可以换成 bash xxx.sh）
+CMD0='python train_final.py --dataset ONeil --groups none'
+CMD1='python train_final.py --dataset ONeil --groups Drug'
+CMD2='python train_final.py --dataset ONeil --groups Cell'
+CMD3='python train_final.py --dataset ONeil --groups Drug --train_batch_size 256'
 
-GPU0=0
-GPU1=1
-GPU2=2
-GPU3=3
+# 如果你需要激活环境，把 ACTIVATE 改成对应命令；不需要就留空
+# 例：ACTIVATE='source /hpc2ssd/softwares/anaconda3/bin/activate pytorch_gpu_2.0.1 && conda activate EGNN'
+ACTIVATE=''
 
-# =========================
-# 下面一般不用改
-# =========================
-
-# 脚本所在目录（保证所有任务都在这里运行）
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-
-run_in_tmux_window () {
-  local win="$1"
-  local gpu="$2"
-  local cmd="$3"
-
-  # 关键点：
-  # 1) cd 到脚本目录
-  # 2) 初始化 conda（非交互 shell 必须 source conda.sh）
-  # 3) conda activate fragc3
-  # 4) 绑 GPU 并执行命令
-  tmux send-keys -t "${SESSION}:${win}" \
-    "bash -lc '
-      set -euo pipefail
-      cd \"${SCRIPT_DIR}\"
-
-      # 关键：让 conda activate 在非交互 shell 生效（二选一即可）
-      # 方式1：conda.sh（最常见）
-      if [ -f \"\$HOME/miniconda3/etc/profile.d/conda.sh\" ]; then
-        source \"\$HOME/miniconda3/etc/profile.d/conda.sh\"
-      elif [ -f \"\$HOME/anaconda3/etc/profile.d/conda.sh\" ]; then
-        source \"\$HOME/anaconda3/etc/profile.d/conda.sh\"
-      else
-        # 方式2：hook（更稳）
-        eval \"\$(\"\$HOME/miniconda3/bin/conda\" shell.bash hook)\"
-      fi
-
-      conda activate fragc3
-
-      export CUDA_VISIBLE_DEVICES=${gpu}
-      echo \"[INFO] \$(date) | session=${SESSION} | window=${win} | GPU=${gpu}\"
-      echo \"[INFO] pwd=\$(pwd)\"
-      echo \"[INFO] cmd=${cmd}\"
-      ${cmd}
-    '" C-m
-}
-
-# 如果会话已存在，直接 attach（避免误开多份）
-if tmux has-session -t "${SESSION}" 2>/dev/null; then
-  echo "[WARN] tmux session '${SESSION}' already exists. Attaching..."
-  tmux attach -t "${SESSION}"
+# 如果 session 已存在，直接提示并 attach（避免重复起）
+if tmux has-session -t "$SESSION" 2>/dev/null; then
+  echo "[WARN] tmux session '$SESSION' already exists. Attaching..."
+  tmux attach -t "$SESSION"
   exit 0
 fi
 
-# 新建会话（后台），并把默认目录设为脚本目录（更稳）
-tmux new-session -d -s "${SESSION}" -c "${SCRIPT_DIR}"
+tmux new-session -d -s "$SESSION" -c "$WORKDIR"
+tmux set-option -t "$SESSION" remain-on-exit on
 
-# window0
-tmux rename-window -t "${SESSION}:0" "gpu${GPU0}"
-run_in_tmux_window 0 "${GPU0}" "${CMD0}"
+# window 0 (GPU0)
+tmux rename-window -t "$SESSION:0" "gpu0"
+tmux send-keys -t "$SESSION:0" "cd '$WORKDIR'" C-m
+tmux send-keys -t "$SESSION:0" "$ACTIVATE" C-m
+tmux send-keys -t "$SESSION:0" "export CUDA_VISIBLE_DEVICES=0" C-m
+tmux send-keys -t "$SESSION:0" "$CMD0" C-m
 
-# window1-3
-tmux new-window -t "${SESSION}" -n "gpu${GPU1}" -c "${SCRIPT_DIR}"
-run_in_tmux_window 1 "${GPU1}" "${CMD1}"
+# window 1 (GPU1)
+tmux new-window -t "$SESSION" -n "gpu1" -c "$WORKDIR"
+tmux send-keys -t "$SESSION:1" "cd '$WORKDIR'" C-m
+tmux send-keys -t "$SESSION:1" "$ACTIVATE" C-m
+tmux send-keys -t "$SESSION:1" "export CUDA_VISIBLE_DEVICES=1" C-m
+tmux send-keys -t "$SESSION:1" "$CMD1" C-m
 
-tmux new-window -t "${SESSION}" -n "gpu${GPU2}" -c "${SCRIPT_DIR}"
-run_in_tmux_window 2 "${GPU2}" "${CMD2}"
+# window 2 (GPU2)
+tmux new-window -t "$SESSION" -n "gpu2" -c "$WORKDIR"
+tmux send-keys -t "$SESSION:2" "cd '$WORKDIR'" C-m
+tmux send-keys -t "$SESSION:2" "$ACTIVATE" C-m
+tmux send-keys -t "$SESSION:2" "export CUDA_VISIBLE_DEVICES=2" C-m
+tmux send-keys -t "$SESSION:2" "$CMD2" C-m
 
-tmux new-window -t "${SESSION}" -n "gpu${GPU3}" -c "${SCRIPT_DIR}"
-run_in_tmux_window 3 "${GPU3}" "${CMD3}"
+# window 3 (GPU3)
+tmux new-window -t "$SESSION" -n "gpu3" -c "$WORKDIR"
+tmux send-keys -t "$SESSION:3" "cd '$WORKDIR'" C-m
+tmux send-keys -t "$SESSION:3" "$ACTIVATE" C-m
+tmux send-keys -t "$SESSION:3" "export CUDA_VISIBLE_DEVICES=3" C-m
+tmux send-keys -t "$SESSION:3" "$CMD3" C-m
 
-tmux attach -t "${SESSION}"
+echo "[OK] Started tmux session '$SESSION' with 4 windows (gpu0..gpu3)."
+echo "     Attach: tmux attach -t $SESSION"
+echo "     List  : tmux ls"
+echo "     Kill  : tmux kill-session -t $SESSION"
+
+tmux attach -t "$SESSION"
