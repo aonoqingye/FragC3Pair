@@ -4,8 +4,9 @@ import argparse
 import numpy as np
 
 from tqdm import tqdm
-from sklearn import metrics
 from sklearn.model_selection import KFold, GroupShuffleSplit, ShuffleSplit
+
+from sklearn import metrics
 from sklearn.metrics import (
     confusion_matrix,
     f1_score,
@@ -16,11 +17,12 @@ from sklearn.metrics import (
     precision_score,
     roc_auc_score,
 )
+import torch.nn.functional as F
+from torch_geometric.loader import DataLoader
 
 from utils import *  # 依赖 save_AUCs 等工具函数（与原流程一致）
 from model.FragC3 import *
 from dataset import PairDataset
-from torch_geometric.loader import DataLoader
 from tools.process_folds import process_folds
 
 # -----------------------------
@@ -287,6 +289,8 @@ def main():
                      desc=f"{args.folds}-Fold CV", position=0, leave=True, **TQDM_KW)
 
     for fold, (trainval_idx, test_idx) in fold_iter:
+        if fold > 1:
+            break  # 只跑第 1 折
         # 内层：再从 trainval 中“按组留出”验证集
         if args.groups != "none":
             gss = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=args.seed + fold)
@@ -478,7 +482,7 @@ def main():
             )
             print(f"Test MSE: {test_mse:.4f}")
     # —— 全部折完成后：汇总为 Excel —— #
-    process_folds(args, out_dir, out_info)
+    # process_folds(args, out_dir, out_info)
 
 
 # -----------------------------
