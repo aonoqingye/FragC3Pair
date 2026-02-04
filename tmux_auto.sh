@@ -43,20 +43,20 @@ if tmux has-session -t "${SESSION}" 2>/dev/null; then
 fi
 
 # 新建会话（后台）
-tmux new-session -d -s "${SESSION}" -c "${WORKDIR}"
+tmux new-session -d -s "${SESSION}"
 
 # window0
 tmux rename-window -t "${SESSION}:0" "gpu${GPU0}"
 run_in_tmux_window 0 "${GPU0}" "${CMD0}"
 
 # window1-3
-tmux new-window -t "${SESSION}" -n "gpu${GPU1}" -c "${WORKDIR}"
+tmux new-window -t "${SESSION}" -n "gpu${GPU1}"
 run_in_tmux_window 1 "${GPU1}" "${CMD1}"
 
-tmux new-window -t "${SESSION}" -n "gpu${GPU2}" -c "${WORKDIR}"
+tmux new-window -t "${SESSION}" -n "gpu${GPU2}"
 run_in_tmux_window 2 "${GPU2}" "${CMD2}"
 
-tmux new-window -t "${SESSION}" -n "gpu${GPU3}" -c "${WORKDIR}"
+tmux new-window -t "${SESSION}" -n "gpu${GPU3}"
 run_in_tmux_window 3 "${GPU3}" "${CMD3}"
 
 # 附加进入会话
