@@ -38,6 +38,17 @@ run_in_tmux_window () {
       set -euo pipefail
       cd \"${SCRIPT_DIR}\"
 
+      # 关键：让 conda activate 在非交互 shell 生效（二选一即可）
+      # 方式1：conda.sh（最常见）
+      if [ -f \"\$HOME/miniconda3/etc/profile.d/conda.sh\" ]; then
+        source \"\$HOME/miniconda3/etc/profile.d/conda.sh\"
+      elif [ -f \"\$HOME/anaconda3/etc/profile.d/conda.sh\" ]; then
+        source \"\$HOME/anaconda3/etc/profile.d/conda.sh\"
+      else
+        # 方式2：hook（更稳）
+        eval \"\$(\"\$HOME/miniconda3/bin/conda\" shell.bash hook)\"
+      fi
+
       conda activate fragc3
 
       export CUDA_VISIBLE_DEVICES=${gpu}
