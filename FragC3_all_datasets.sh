@@ -4,11 +4,11 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 GPU=3
-DATASETS=("ONeil" "DrugComb" "ALMANAC")
+DATASET="ONeil"
 CV_GROUPS=("Cell" "Drug" "none")
 
 echo "[INFO] Start sequential runs on GPU=${GPU}"
-echo "[INFO] Datasets: ${DATASETS[*]}"
+echo "[INFO] Dataset: ${DATASET}"
 echo "[INFO] Groups: ${CV_GROUPS[*]}"
 echo
 

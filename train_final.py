@@ -503,7 +503,7 @@ def parse_args():
                    choices=["FragC3", "SDDS", "MultiSyn", "AttenSyn", "PRODeepSyn",
                             "DeepDDS_GCN", "DeepDDS_GAT", "MatchMaker", "GCN", "GAT"])
     p.add_argument("--dropout", type=float, default=0.1)
-    p.add_argument("--frag_list", nargs="+", default=["brics", "fg"],
+    p.add_argument("--frag_list", nargs="+", default=["brics", "fg", "murcko"],
                    help='"brics", "fg", "murcko"')
     p.add_argument("--frag_agg", type=str, default="cell_attn",
                    choices=["mlp", "gate", "cell_attn"], help="多视角融合机制")
@@ -516,8 +516,8 @@ def parse_args():
                    choices=["mul", "add", "bilinear"])
     p.add_argument("--tokenizer", type=str, default="conv",
                    choices=["conv", "linear"])
-    p.add_argument("--heads", type=int, default=4, help="注意力头数")
-    p.add_argument("--ffn_expansion", type=int, default=4, help="FFN扩张倍数")
+    p.add_argument("--heads", type=int, default=2, help="注意力头数")
+    p.add_argument("--ffn_expansion", type=int, default=8, help="FFN扩张倍数")
     # p.add_argument("--cell_hid", type=int, default=512)
     p.add_argument("--cell_agg", type=int, default=256)
     p.add_argument("--cell_pred", type=int, default=128)
