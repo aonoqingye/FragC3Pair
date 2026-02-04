@@ -4,12 +4,6 @@ set -euo pipefail
 # 可直接改的参数区（你只改这里）
 # =========================
 SESSION="gpu4"
-# 进入项目目录（按需修改）
-WORKDIR="$HOME/code/FragC3Pair"
-
-# 可选：每个窗口跑之前要执行的环境初始化（按需修改/删掉）
-# 例如 module load / conda activate / export CC/CXX 等
-ENV_SETUP=$'conda activate fragc3'
 
 # 四个任务：你把 python 脚本 + 参数直接写在 CMD 里
 # 注意：这里不需要写 CUDA_VISIBLE_DEVICES，会自动分配 0/1/2/3
@@ -36,9 +30,7 @@ run_in_tmux_window () {
   # 在 tmux window 里执行：cd -> env -> 绑 GPU -> 跑命令
   # 用 bash -lc 确保能执行 module/conda 等 shell 初始化逻辑
   tmux send-keys -t "${SESSION}:${win}" \
-    "bash -lc 'cd \"${WORKDIR}\" \
-      && ${ENV_SETUP} \
-      && export CUDA_VISIBLE_DEVICES=${gpu} \
+    "bash -lc 'export CUDA_VISIBLE_DEVICES=${gpu} \
       && echo \"[INFO] $(date) | window=${win} | GPU=${gpu} | cmd=${cmd}\" \
       && ${cmd}'" C-m
 }
