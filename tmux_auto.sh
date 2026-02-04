@@ -28,13 +28,25 @@ run_in_tmux_window () {
   local gpu="$2"
   local cmd="$3"
 
+  # 关键点：
+  # 1) cd 到脚本目录
+  # 2) 初始化 conda（非交互 shell 必须 source conda.sh）
+  # 3) conda activate fragc3
+  # 4) 绑 GPU 并执行命令
   tmux send-keys -t "${SESSION}:${win}" \
-    "cd \"${SCRIPT_DIR}\" \
-     && export CUDA_VISIBLE_DEVICES=${gpu} \
-     && echo \"[INFO] $(date) | window=${win} | GPU=${gpu} | cmd=${cmd}\" \
-     && ${cmd}" C-m
-}
+    "bash -lc '
+      set -euo pipefail
+      cd \"${SCRIPT_DIR}\"
 
+      conda activate fragc3
+
+      export CUDA_VISIBLE_DEVICES=${gpu}
+      echo \"[INFO] \$(date) | session=${SESSION} | window=${win} | GPU=${gpu}\"
+      echo \"[INFO] pwd=\$(pwd)\"
+      echo \"[INFO] cmd=${cmd}\"
+      ${cmd}
+    '" C-m
+}
 
 # 如果会话已存在，直接 attach（避免误开多份）
 if tmux has-session -t "${SESSION}" 2>/dev/null; then

@@ -342,7 +342,7 @@ def main():
 
         # —— 初始化每折结果 CSV —— #
         out_info = (f'{args.dataset}_Group{args.groups}_Frags{"_".join(args.frag_list)}'
-                    f'_Tri{args.tri_variant}_CV{args.cv_mode}_Lc{args.Lc}'
+                    f'Batch{args.train_batch_size}_Tri{args.tri_variant}_CV{args.cv_mode}_Lc{args.Lc}'
                     f'_H{args.heads}_FFN{args.ffn_expansion}_CA{args.cell_agg}_CP{args.cell_pred}')
         csv_path = os.path.join(out_dir, f"{out_info}_fold_{fold}.csv")
 
