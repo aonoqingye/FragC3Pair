@@ -14,19 +14,19 @@ def _merge_param_summaries(args, sweep_values):
     # 与 process_folds 一致的目录结构
     work_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     summary_dir = os.path.join(work_dir, "summary")
+    ablation_dir = os.path.join(work_dir, "ablation")
     os.makedirs(summary_dir, exist_ok=True)
 
     # 汇总目标文件名（不包含具体取值，代表本次 sweep 的总表）
     hyper = str(args.hyperparam)
     combined_name = f"{args.dataset}_Group_{args.groups}_{hyper}_汇总.xlsx"
-    combined_path = os.path.join(summary_dir, combined_name)
+    combined_path = os.path.join(ablation_dir, combined_name)
 
     rows = []
     for val in sweep_values:
-        if val == "FragC3":
-            out_info = f'{args.dataset}_{val}_Frags{"_".join(args.frag_list)}_Group{args.groups}'
-        else:
-            out_info = f'{args.dataset}_{val}_Group{args.groups}'
+        args.Lc = val
+        out_info = (f'{args.dataset}_Group{args.groups}_Frags{"_".join(args.frag_list)}_Agg{args.frag_agg}'
+                    f'_C3Attn{args.use_C3Attn}_tri{args.tri_attn}_tokenizer{args.tokenizer}_Lc{args.Lc}')
         xlsx_path = os.path.join(summary_dir, f"{out_info}_cv{int(args.folds)}.xlsx")
         if not os.path.exists(xlsx_path):
             print(f"[merge] 缺失 {xlsx_path}，跳过。")
@@ -65,10 +65,10 @@ def _merge_param_summaries(args, sweep_values):
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--folds", type=int, default=5, help="随机划分折数（默认 5）")
-    p.add_argument("--groups", type=str, default="none", choices=["Cell", "Drug", "none"], help="分组依据")
+    p.add_argument("--groups", type=str, default="Drug", choices=["Cell", "Drug", "none"], help="分组依据")
     # 模型参数
     p.add_argument("--hidden", type=int, default=300, help="隐层维度")
-    p.add_argument("--encoder", type=str, default="SDDS",
+    p.add_argument("--encoder", type=str, default="FragC3",
                    choices=["FragC3", "SDDS", "MultiSyn", "AttenSyn", "DeepDDS_GCN", "DeepDDS_GAT", "GCN", "GAT"])
     p.add_argument("--dropout", type=float, default=0.1)
     p.add_argument("--frag_list", nargs="+", default=["brics", "fg", "murcko"],
@@ -78,22 +78,22 @@ if __name__ == "__main__":
     # C3Attn参数
     p.add_argument("--use_C3Attn", type=bool, default=True, help="开启Bi2Frag编码")
     p.add_argument("--tri_attn", type=bool, default=True, help="开启cell line注意力")
-    p.add_argument("--tri_variant", type=str, default="trilinear",
+    p.add_argument("--tri_variant", type=str, default="scale_dot",
                    choices=['scale_dot', 'add', 'dot', 'trilinear'])
-    p.add_argument("--cv_mode", type=str, default="mul",
+    p.add_argument("--cv_mode", type=str, default="bilinear",
                    choices=["mul", "add", "bilinear"])
     p.add_argument("--tokenizer", type=str, default="conv",
                    choices=["conv", "linear"])
-    p.add_argument("--heads", type=int, default=4, help="注意力头数")
-    p.add_argument("--ffn_expansion", type=int, default=4, help="FFN扩张倍数")
+    p.add_argument("--heads", type=int, default=2, help="注意力头数")
+    p.add_argument("--ffn_expansion", type=int, default=8, help="FFN扩张倍数")
     # p.add_argument("--cell_hid", type=int, default=512)
     p.add_argument("--cell_agg", type=int, default=512)
     p.add_argument("--cell_pred", type=int, default=128)
-    p.add_argument("--Lc", type=int, default=128)
+    p.add_argument("--Lc", type=int, default=32)
     # 数据与设备
     p.add_argument("--dataset", type=str, default="ONeil",
                    choices=["ALMANAC", "DrugComb", "ONeil"], help="数据集前缀名（ONeil 自动切换为二分类）")
-    p.add_argument("--hyperparam", type=str, default="Encoders", help="对比条目")
+    p.add_argument("--hyperparam", type=str, default="Lc", help="对比条目")
     args = p.parse_args()
 
     out_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'results')
@@ -103,12 +103,12 @@ if __name__ == "__main__":
         out_info = f'{args.dataset}_{args.encoder}_Group{args.groups}'
     # sweep = [0.0, 0.05, 0.1, 0.15, 0.2]
     # sweep = [1, 2, 3, 4, 5, 6]
-    # sweep = [32, 64, 128, 256, 512]
+    sweep = [16, 32, 64, 128, 256, 384]
     # sweep = [16, 32, 64, 128]
     # sweep = ['scale_dot', 'add', 'dot', 'trilinear']
     # frag_list = ["brics", "fg", "murcko", "ringpaths"]
     # sweep = [["brics"], ["fg"], ["murcko"], ["brics", "fg"], ["brics", "fg", "murcko"]]
-    sweep = ["FragC3", "SDDS", "MultiSyn", "AttenSyn", "DeepDDS_GCN", "DeepDDS_GAT", "GCN", "GAT"]
+    # sweep = ["FragC3", "SDDS", "MultiSyn", "AttenSyn", "DeepDDS_GCN", "DeepDDS_GAT", "GCN", "GAT"]
     # sweep = []
     # for r in range(1, 5):  # 长度从 1 到 4
     #     sweep.extend(itertools.combinations(frag_list, r))

@@ -1,0 +1,14 @@
+ONeil:
+cell_agg = 256
+cell_pred = 128
+Lc = 32
+
+ALMANAC:
+cell_agg = 256
+cell_pred = 128
+Lc = 128
+
+DrugComb:
+cell_agg = 128
+cell_pred = 128
+Lc = 32

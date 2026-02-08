@@ -220,7 +220,7 @@ def _merge_param_single(args, sweep_values):
     rows = []
     for val in sweep_values:
         # 临时覆盖 args（只用于拼 out_info / 找文件）
-        args.cell_agg = val
+        args.Lc = val
 
         out_info = (
             f'{args.dataset}_Group{args.groups}_Frags{"_".join(args.frag_list)}'
@@ -272,7 +272,7 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--train_batch_size", type=int, default=512, help="训练批大小")
     p.add_argument("--folds", type=int, default=5, help="随机划分折数（默认 5）")
-    p.add_argument("--groups", type=str, default="Cell", choices=["Cell", "Drug", "none"], help="分组依据")
+    p.add_argument("--groups", type=str, default="Drug", choices=["Cell", "Drug", "none"], help="分组依据")
     # 模型参数
     p.add_argument("--hidden", type=int, default=300, help="隐层维度")
     p.add_argument("--encoder", type=str, default="FragC3",
@@ -283,8 +283,8 @@ if __name__ == "__main__":
     p.add_argument("--frag_agg", type=str, default="cell_attn",
                    choices=["mlp", "gate", "cell_attn"], help="多视角融合机制")
     # C3Attn参数
-    p.add_argument("--use_C3Attn", type=bool, default=True, help="开启Bi2Frag编码")
-    p.add_argument("--tri_attn", type=bool, default=True, help="开启cell line注意力")
+    p.add_argument("--use_C3Attn", type=bool, default=False, help="开启Bi2Frag编码")
+    p.add_argument("--tri_attn", type=bool, default=False, help="开启cell line注意力")
     p.add_argument("--tri_variant", type=str, default="scale_dot",
                    choices=['scale_dot', 'add', 'dot', 'trilinear'])
     p.add_argument("--cv_mode", type=str, default="bilinear",
@@ -300,22 +300,23 @@ if __name__ == "__main__":
     # 数据与设备
     p.add_argument("--dataset", type=str, default="ONeil",
                    choices=["ALMANAC", "DrugComb", "ONeil"], help="数据集前缀名（ONeil 自动切换为二分类）")
-    p.add_argument("--hyperparam", type=str, default="CA", help="参数变量")
+    p.add_argument("--hyperparam", type=str, default="Lc", help="参数变量")
     args = p.parse_args()
 
     out_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'results')
-    out_info = (f'{args.dataset}_Group{args.groups}_Frags{"_".join(args.frag_list)}'
-                f'Batch{args.train_batch_size}_Tri{args.tri_variant}_CV{args.cv_mode}_Lc{args.Lc}'
-                f'_H{args.heads}_FFN{args.ffn_expansion}_CA{args.cell_agg}_CP{args.cell_pred}')
-    process_folds(args, out_dir, out_info)
+    for g in ["Drug"]:
+        args.groups = g
+        out_info = (f'{args.dataset}_Group{args.groups}_Frags{"_".join(args.frag_list)}_Agg{args.frag_agg}'
+                    f'_C3Attn{args.use_C3Attn}_tri{args.tri_attn}_tokenizer{args.tokenizer}_Lc{args.Lc}')
+        process_folds(args, out_dir, out_info)
     # sweep = [0.0, 0.05, 0.1, 0.15, 0.2]
     # sweep = [1, 2, 3, 4, 5, 6, 7, 8]
-    sweep = [32, 64, 128, 256, 512]
-    # sweep = [16, 32, 64, 128, 256, 512]
+    # sweep = [32, 64, 128, 256, 512]
+    sweep = [16, 32, 64, 128, 256, 512]
     TRI_VARIANTS = ['scale_dot', 'add', 'dot', 'trilinear']
     CV_MODES = ['mul', 'add', 'bilinear']
-    CA = [32, 64, 128, 256, 512]
-    CP = [32, 64, 128, 256, 512]
+    CA = [64, 128, 256, 512]
+    CP = [64, 128, 256, 512]
     # sweep = list(itertools.product(CA, CP))  # 12 combos: (tri, cvm)
 
     # _merge_param_comb(args, sweep)

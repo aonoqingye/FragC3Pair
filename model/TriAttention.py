@@ -95,23 +95,23 @@ class CellLineContextTokenizer(nn.Module):
         return x
 
 class ContextLinearTokenizer(nn.Module):
-    def __init__(self, ctx_in_dim: int, d_model: int, dropout: float = 0.0):
+    def __init__(self, ctx_in_dim, d_model, dropout=0.0):
         super().__init__()
-        self.d_model = d_model
         self.pre_ln = nn.LayerNorm(ctx_in_dim)
         self.proj = nn.Linear(ctx_in_dim, d_model)
         self.drop = nn.Dropout(dropout)
         self.post_ln = nn.LayerNorm(d_model)
         self.act = nn.GELU()
 
-    def forward(self, cell_vec: torch.Tensor) -> torch.Tensor:
-        # [B,N] -> [B,Lc,D]
+    def forward(self, cell_vec):
+        # [B, N] → [B, D]
         x = self.pre_ln(cell_vec)
-        x = self.proj(x)                      # [B, D]
+        x = self.proj(x)
         x = self.act(x)
         x = self.drop(x)
         x = self.post_ln(x)
-        return x
+
+        return x.unsqueeze(1)   # ✅ [B, 1, D]
 
 
 class TriEinsumAttention(nn.Module):

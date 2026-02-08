@@ -262,10 +262,6 @@ def main():
     length = len(pairs_data)
     log(f"Parameters:  {args}")
 
-    # 设定“组”的定义：二选一（按你的评测目标）
-    # drug1_id = drug1_data.data.drug_id
-    # drug2_id = drug2_data.data.drug_id
-
     if args.groups == 'Cell':
         groups = np.asarray(pairs_data.data.cell_id)
         cv = GroupShuffleSplit(n_splits=5, test_size=0.2, random_state=args.seed)
@@ -287,6 +283,9 @@ def main():
                      desc=f"{args.folds}-Fold CV", position=0, leave=True, **TQDM_KW)
 
     for fold, (trainval_idx, test_idx) in fold_iter:
+        if args.only_fold:
+            if fold != args.only_fold:
+                continue
         # 内层：再从 trainval 中“按组留出”验证集
         if args.groups != "none":
             gss = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=args.seed + fold)
@@ -341,9 +340,8 @@ def main():
         optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
         # —— 初始化每折结果 CSV —— #
-        out_info = (f'{args.dataset}_Group{args.groups}_Frags{"_".join(args.frag_list)}'
-                    f'Batch{args.train_batch_size}_Tri{args.tri_variant}_CV{args.cv_mode}_Lc{args.Lc}'
-                    f'_H{args.heads}_FFN{args.ffn_expansion}_CA{args.cell_agg}_CP{args.cell_pred}')
+        out_info = (f'{args.dataset}_Group{args.groups}_Frags{"_".join(args.frag_list)}_Agg{args.frag_agg}'
+                    f'_C3Attn{args.use_C3Attn}_tri{args.tri_attn}_tokenizer{args.tokenizer}_Lc{args.Lc}')
         csv_path = os.path.join(out_dir, f"{out_info}_fold_{fold}.csv")
 
         with open(csv_path, "w") as f:
@@ -478,7 +476,8 @@ def main():
             )
             print(f"Test MSE: {test_mse:.4f}")
     # —— 全部折完成后：汇总为 Excel —— #
-    process_folds(args, out_dir, out_info)
+    if not args.only_fold:
+        process_folds(args, out_dir, out_info)
 
 
 # -----------------------------
@@ -496,6 +495,7 @@ def parse_args():
     p.add_argument("--log_interval", type=int, default=20, help="训练日志打印间隔（按 batch）")
     p.add_argument("--seed", type=int, default=0, help="随机种子")
     p.add_argument("--folds", type=int, default=5, help="随机划分折数（默认 5）")
+    p.add_argument("--only_fold", type=int, default=2, help="单次运行")
     p.add_argument("--groups", type=str, default="Drug", choices=["Cell", "Drug", "none"], help="分组依据")
     # 模型参数
     p.add_argument("--hidden", type=int, default=300, help="隐层维度")
