@@ -1,7 +1,12 @@
 import csv
 import os
 import torch
-import matplotlib.pyplot as plt
+
+# matplotlib 改为可选导入，避免NumPy兼容性问题
+try:
+    import matplotlib.pyplot as plt
+except ImportError:
+    plt = None
 
 from torch import nn
 from sklearn.metrics import auc, mean_absolute_error, roc_auc_score
@@ -49,6 +54,8 @@ def get_func(fn_name):
 
 
 def save_AUCs(AUCs, filename):
+    if filename is None:
+        return  # 如果filename为None，跳过保存
     with open(filename, "a") as f:
         f.write(",".join(map(str, AUCs)) + "\n")
 

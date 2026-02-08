@@ -4,23 +4,38 @@ import csv
 import math
 import json
 import torch
-import matplotlib
+import torch.nn.functional as F
 import numpy as np
+
+# 确保numpy正确初始化后再导入matplotlib
+# 先导入numpy并确保其正常工作
+try:
+    _ = np.array([1, 2, 3])  # 触发numpy初始化
+except Exception:
+    pass
+
+# 延迟导入matplotlib，避免numpy兼容性问题
+try:
+    import matplotlib
+    # --- 固定非交互后端，必须在 pyplot 之前 ---
+    matplotlib.use("Agg")
+    from matplotlib import pyplot as plt
+    from matplotlib import patches
+    from matplotlib.patches import FancyArrowPatch
+except (ImportError, RuntimeError) as e:
+    print(f"Warning: matplotlib import failed: {e}")
+    matplotlib = None
+    plt = None
+    patches = None
+    FancyArrowPatch = None
 
 from tools.fragment_namer import describe_fragment
 from tools.fg_rules_loader import build_fg_smart_db
-from prepare_onco_data import GetFragmentFeats, _get_mol_fragment_sets_fg, _get_mol_fragment_sets_murcko, \
-    _get_mol_fragment_sets_ringpaths
+from prepare_oneil_data_efgs import GetFragmentFeats, _get_mol_fragment_sets_fg, _get_mol_fragment_sets_murcko
 from tools.prompter import _call_llm
-
-# --- 固定非交互后端，必须在 pyplot 之前 ---
-matplotlib.use("Agg")
 
 from rdkit import Chem
 from rdkit.Chem import AllChem
-from matplotlib import pyplot as plt
-from matplotlib import patches
-from matplotlib.patches import FancyArrowPatch
 from rdkit.Chem.Draw import rdMolDraw2D
 from typing import Dict, List, Tuple, Optional
 from functools import lru_cache
@@ -74,11 +89,20 @@ def _brics_members_from_smiles(smiles: str, view_order) -> Tuple[Chem.Mol, Dict[
         else:
             atom2frag = {}
             if view == "fg":
-                sets, edges = _get_mol_fragment_sets_fg(mol) or []
+                result = _get_mol_fragment_sets_fg(mol)
+                if result is not None:
+                    sets, background, edges = result  # _get_mol_fragment_sets_fg 返回 3 个值
+                else:
+                    sets, edges = [], []
             elif view == "murcko":
-                sets, edges = _get_mol_fragment_sets_murcko(mol) or []
+                result = _get_mol_fragment_sets_murcko(mol)
+                if result is not None:
+                    sets, edges = result  # _get_mol_fragment_sets_murcko 返回 2 个值
+                else:
+                    sets, edges = [], []
             elif view == "ringpaths":
-                sets, edges = _get_mol_fragment_sets_ringpaths(mol)
+                # ringpaths view not available in prepare_oneil_data_efgs, skip it
+                sets, edges = [], []
             for fi, aset in enumerate(sets):
                 for a in aset:
                     atom2frag[a] = fi
@@ -374,8 +398,16 @@ def _overlay_fragments_on_ax(
 
 def extract_target_and_pred(y_i: torch.Tensor, out_i: torch.Tensor) -> Tuple[float, float, float, float]:
     """回归显示：返回 (y_true, y_pred, |err|, |rel_err|)。"""
-    y_true = float(y_i.detach().cpu())
-    y_pred = float(out_i.detach().cpu())
+    y_true = float(y_i.detach().cpu().item() if y_i.numel() == 1 else y_i.detach().cpu().squeeze().item())
+    # 处理 out_i：如果是分类任务（2维），取正类概率；如果是回归任务（1维），直接取值
+    if out_i.dim() > 0 and out_i.numel() > 1:
+        # 分类任务：取正类概率
+        if out_i.shape[0] == 2:
+            y_pred = float(F.softmax(out_i, dim=0)[1].detach().cpu().item())
+        else:
+            y_pred = float(out_i.detach().cpu().squeeze().item())
+    else:
+        y_pred = float(out_i.detach().cpu().item() if out_i.numel() == 1 else out_i.detach().cpu().squeeze().item())
     abs_err = abs(y_pred - y_true)
     rel_err = abs_err / (abs(y_true) + 1e-8)
     return y_true, y_pred, abs_err, rel_err
@@ -494,12 +526,42 @@ def save_cross_attn_pairlines(
         if FG_RULES is None:
             FG_RULES = build_fg_smart_db()  # 读 RDConfig.RDDataDir 下两文件
 
+        drawn_views = []  # 记录成功绘制的 view
+        
         def draw_one_view(i: int, row_idx: int, view_key: str):
+            # 在函数内部可以访问外层的 drug_id_a, drug_id_b 变量
             sub = extra_per_view[view_key]
-            attn_dict = sub.get("attn", {})
-            valid_a = sub.get("valid_a", None)
-            valid_b = sub.get("valid_b", None)
+            # 兼容两种数据结构：
+            # 1. 新格式: {"attn": {"B2A": ..., "A2B": ...}, "valid_a": ..., "valid_b": ...}
+            # 2. 旧格式: {"B2A": ..., "A2B": ...} (直接是注意力字典)
+            if isinstance(sub, dict) and "attn" in sub:
+                attn_dict = sub.get("attn", {})
+                valid_a = sub.get("valid_a", None)
+                valid_b = sub.get("valid_b", None)
+            else:
+                # 旧格式：直接是注意力字典
+                attn_dict = sub
+                valid_a = None
+                valid_b = None
+            
             # 统一成 [B,H,Lq,Lk] 形状（这里只取单向互注意力）
+            # 检查必要的键是否存在
+            if not isinstance(attn_dict, dict) or "B2A" not in attn_dict or "A2B" not in attn_dict:
+                # 跳过缺少必要注意力数据的 view
+                drug_a_name = str(drug_id_a[i]) if i < len(drug_id_a) else "unknown"
+                drug_b_name = str(drug_id_b[i]) if i < len(drug_id_b) else "unknown"
+                print(f"[Warning] View {view_key} missing B2A or A2B attention for sample {i} "
+                      f"(DrugA={drug_a_name}, DrugB={drug_b_name}), skipping.")
+                return False  # 返回 False 表示未绘制
+            
+            # 检查 valid_a 和 valid_b 是否存在
+            if valid_a is None or valid_b is None:
+                drug_a_name = str(drug_id_a[i]) if i < len(drug_id_a) else "unknown"
+                drug_b_name = str(drug_id_b[i]) if i < len(drug_id_b) else "unknown"
+                print(f"[Warning] View {view_key} missing valid_a or valid_b for sample {i} "
+                      f"(DrugA={drug_a_name}, DrugB={drug_b_name}), skipping.")
+                return False  # 返回 False 表示未绘制
+            
             B2A = attn_dict["B2A"]
             A2B = attn_dict["A2B"]
             if B2A.dim() == 3:
@@ -512,7 +574,8 @@ def save_cross_attn_pairlines(
             va_i, vb_i = valid_a[i].bool().cpu(), valid_b[i].bool().cpu()
             B2A_2d, A2B_2d = _reduce_and_crop(B2A_i, A2B_i, va_i, vb_i)
             if (B2A_2d is None) and (A2B_2d is None):
-                return
+                print(f"[Warning] View {view_key} has None attention matrices for sample {i}, skipping.")
+                return False  # 返回 False 表示未绘制
 
             # 行面板
             top = 1.0 - (row_idx + 1) / rows
@@ -535,8 +598,20 @@ def save_cross_attn_pairlines(
             idx_a = np.flatnonzero(maskA)
             idx_b = np.flatnonzero(maskB)
             if idx_a.size == 0 or idx_b.size == 0:
-                plt.close(fig)
-                print(f"Invalid Masks in idx{idx[i]} view {view_key}: maskA:{idx_a} maskB:{idx_b}")
+                # 添加更详细的调试信息
+                drug_a_name = str(drug_id_a[i]) if i < len(drug_id_a) else "unknown"
+                drug_b_name = str(drug_id_b[i]) if i < len(drug_id_b) else "unknown"
+                if valid_a is not None and valid_b is not None:
+                    valid_a_sum = valid_a[i].sum().item() if i < valid_a.shape[0] else 0
+                    valid_b_sum = valid_b[i].sum().item() if i < valid_b.shape[0] else 0
+                    print(f"[Warning] View {view_key} skipped for sample {i} (idx={idx[i]}): "
+                          f"DrugA={drug_a_name} has {valid_a_sum} valid fragments, "
+                          f"DrugB={drug_b_name} has {valid_b_sum} valid fragments. "
+                          f"Need both > 0 to draw attention.")
+                else:
+                    print(f"[Warning] View {view_key} skipped for sample {i} (idx={idx[i]}): "
+                          f"maskA:{idx_a} maskB:{idx_b}, valid_a/valid_b not available.")
+                return False  # 返回 False 表示未绘制
 
             Pa_eff, Pb_eff = Pa[idx_a], Pb[idx_b]
             La, Lb = B2A_2d.shape[0], B2A_2d.shape[1]
@@ -646,17 +721,45 @@ def save_cross_attn_pairlines(
             for (direc, ia, jb, score) in pick:
                 a_atoms = frag2atoms_a[view_key].get(ia, [])
                 b_atoms = frag2atoms_b[view_key].get(jb, [])
-                a_desc = describe_fragment(mol_a, a_atoms, prefer_name=(view_key == "fg"), rulebank=FG_RULES) if mol_a and a_atoms else {"name": "", "smiles": ""}
-                b_desc = describe_fragment(mol_b, b_atoms, prefer_name=(view_key == "fg"), rulebank=FG_RULES) if mol_b and b_atoms else {"name": "", "smiles": ""}
+                # describe_fragment 只接受两个参数：parent 和 atom_indices
+                a_desc = describe_fragment(mol_a, a_atoms) if mol_a and a_atoms else {"name": "", "smiles": ""}
+                b_desc = describe_fragment(mol_b, b_atoms) if mol_b and b_atoms else {"name": "", "smiles": ""}
                 vdict["top_pairs"].append({
                     "dir": direc, "fragA_id": int(ia), "fragB_id": int(jb),
                     "attn": float(score), "fragA": a_desc, "fragB": b_desc
                 })
             sample_dict["views"][view_key] = vdict
+            
+            # 成功绘制，返回 True
+            return True
 
         # 绘制每一行
+        views_drawn = 0
         for r, vk in enumerate(view_order):
-            draw_one_view(i, r, vk)
+            # 记录绘制前的状态
+            try:
+                result = draw_one_view(i, r, vk)
+                if result is True:  # 成功绘制
+                    views_drawn += 1
+                    drawn_views.append(vk)
+            except Exception as e:
+                print(f"[Error] Failed to draw view {vk} for sample {i}: {type(e).__name__}: {e}")
+        
+        # 如果没有成功绘制任何 view，添加提示信息
+        if views_drawn == 0:
+            ax_empty = fig.add_axes([0.1, 0.4, 0.8, 0.2])
+            ax_empty.set_axis_off()
+            drug_a_name = str(drug_id_a[i]) if i < len(drug_id_a) else "unknown"
+            drug_b_name = str(drug_id_b[i]) if i < len(drug_id_b) else "unknown"
+            msg = (f"No valid views to display for DrugA={drug_a_name}, DrugB={drug_b_name}.\n"
+                   f"All views ({', '.join(view_order)}) were skipped.\n"
+                   f"Possible reasons: missing fragments or all-zero features.")
+            ax_empty.text(0.5, 0.5, msg, 
+                         ha="center", va="center", fontsize=12, color="red",
+                         bbox=dict(boxstyle="round,pad=0.5", facecolor="yellow", alpha=0.8))
+            print(f"[Warning] No views were successfully drawn for sample {i} (idx={idx[i]}, "
+                  f"DrugA={drug_a_name}, DrugB={drug_b_name}). "
+                  f"Available views: {list(extra_per_view.keys())}")
 
         # 图例（与颜色一致）
         legend_elems = [

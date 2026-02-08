@@ -619,7 +619,7 @@ class FragC3(nn.Module):
         bg.nodes["a"].data["f_junc"] = self.act(proj["w_junc"](bg.nodes["a"].data["f_junc"]))
         bg.nodes["p"].data["f_junc"] = self.act(proj["w_junc"](bg.nodes["p"].data["f_junc"]))
 
-    def _encode_one_view(self, graphs_a, graphs_b, view_key, cell_vec=None, return_attn=False):
+    def _encode_one_view(self, graphs_a, graphs_b, view_key, cell_vec=None, return_attn=False, frag_masks=None):
         # batch & init
         ga = dgl.batch(graphs_a); gb = dgl.batch(graphs_b)
         self.init_feature_for_view(ga, view_key)
@@ -630,6 +630,45 @@ class FragC3(nn.Module):
         # node readout
         h_a, valid_a, node_size_a = self.readout(ga, "h")
         h_b, valid_b, node_size_b = self.readout(gb, "h")
+        
+        # Apply fragment masks if provided (for fidelity evaluation)
+        # frag_masks: {view_key: {"A": [tensor of indices for each sample], "B": [...]}}
+        # Each tensor contains local indices (0 to n-1) for that sample's fragments
+        if frag_masks is not None and view_key in frag_masks:
+            device = valid_a.device
+            B = valid_a.shape[0]
+            mask_A = frag_masks[view_key].get("A", None)
+            mask_B = frag_masks[view_key].get("B", None)
+            
+            if mask_A is not None and len(mask_A) == B:
+                # mask_A is a list of tensors, one per sample in the batch
+                # Each tensor contains local fragment indices (0 to n-1) for that sample
+                for i, indices in enumerate(mask_A):
+                    if indices.numel() > 0:
+                        indices = indices.to(device)
+                        # Get the actual number of fragments for this sample
+                        # node_size_a[i] gives the number of fragment nodes for sample i
+                        n_frags = int(node_size_a[i].item())
+                        # Clamp indices to valid range [0, n_frags-1]
+                        indices = indices[(indices >= 0) & (indices < n_frags)]
+                        if indices.numel() > 0:
+                            # Mask out the specified fragment nodes
+                            # valid_a shape is [B, Lmax], where Lmax is the max fragments in batch
+                            # For sample i, valid fragments are at positions [0, n_frags-1]
+                            valid_a[i, indices] = False
+            
+            if mask_B is not None and len(mask_B) == B:
+                # mask_B is a list of tensors, one per sample in the batch
+                for i, indices in enumerate(mask_B):
+                    if indices.numel() > 0:
+                        indices = indices.to(device)
+                        # Get the actual number of fragments for this sample
+                        n_frags = int(node_size_b[i].item())
+                        # Clamp indices to valid range [0, n_frags-1]
+                        indices = indices[(indices >= 0) & (indices < n_frags)]
+                        if indices.numel() > 0:
+                            # Mask out the specified fragment nodes
+                            valid_b[i, indices] = False
 
         if self.use_C3Attn:
             h_a, h_b, attn = self.C3A[view_key](h_a, h_b, valid_a, valid_b, cell_vec=cell_vec, return_attn=return_attn)
@@ -650,6 +689,17 @@ class FragC3(nn.Module):
             return torch.cat(embs, dim=0)  # [B, 2*D]
         emb_a = pool_valid(h_a, node_size_a)
         emb_b = pool_valid(h_b, node_size_b)
+        
+        # 如果 return_attn=True，将 valid_a 和 valid_b 也包含在返回的字典中
+        if return_attn and attn is not None:
+            # attn 已经是 {"B2A": ..., "A2B": ...} 格式
+            # 添加 valid_a 和 valid_b
+            attn = {
+                "attn": attn,
+                "valid_a": valid_a,
+                "valid_b": valid_b
+            }
+        
         return emb_a, emb_b, attn
 
     def _aggregate_views(self, embs, mode, cell_vec):
@@ -699,9 +749,11 @@ class FragC3(nn.Module):
 
         # 逐视角编码 → 每药物得到一个 [B, 2D] 表示
         embsA = []; embsB = []; extra_per_view = {}
+        # Get fragment masks if available (for fidelity evaluation)
+        frag_masks = getattr(data, 'frag_masks', None)
         for k in self.frag_list:
             ga, gb = get_graphs(data, k)
-            emb_a, emb_b, extra = self._encode_one_view(ga, gb, k, cell_vec=cell if self.tri_attn else None, return_attn=return_attn)
+            emb_a, emb_b, extra = self._encode_one_view(ga, gb, k, cell_vec=cell if self.tri_attn else None, return_attn=return_attn, frag_masks=frag_masks)
             embsA.append(emb_a); embsB.append(emb_b)
             if return_attn: extra_per_view[k] = extra
 

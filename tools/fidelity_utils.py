@@ -122,7 +122,8 @@ def _remove_p_nodes(
     assert len(graphs) == len(remove_idx_list)
     new_graphs: List[dgl.DGLHeteroGraph] = []
     for g, rm in zip(graphs, remove_idx_list):
-        rm = rm.detach().cpu()
+        # rm 必须与图在同一设备，否则 DGL 会报 device 不一致
+        rm = rm.detach().to(g.device)
         if rm.numel() == 0:
             new_graphs.append(g)
             continue
@@ -137,6 +138,37 @@ def _remove_p_nodes(
             continue
 
         g2 = dgl.remove_nodes(g, rm, ntype="p")
+        # 确保边特征 schema 一致：当边为空时，显式设定形状 (0, feat_dim)
+        etype = ("p", "r", "p")
+        if etype in g2.etypes:
+            # 确定特征维度
+            if g.num_edges(etype) > 0 and etype in g.edata and "x" in g.edata[etype]:
+                if g.edata[etype]["x"].ndim == 2:
+                    feat_dim = g.edata[etype]["x"].shape[1]
+                else:
+                    feat_dim = 34  # 默认 BrICS/Ring 边特征维度
+            else:
+                feat_dim = 34  # 默认 BrICS/Ring 边特征维度
+            
+            # 处理边特征
+            if g2.num_edges(etype) == 0:
+                # 空边：确保维度为 (0, feat_dim)
+                if etype not in g2.edata:
+                    g2.edata[etype] = {}
+                g2.edata[etype]["x"] = torch.empty((0, feat_dim), dtype=torch.float32, device=g2.device)
+            elif etype in g2.edata and "x" in g2.edata[etype]:
+                # 非空边：确保维度为 (num_edges, feat_dim)
+                if g2.edata[etype]["x"].ndim == 1:
+                    g2.edata[etype]["x"] = g2.edata[etype]["x"].reshape(-1, feat_dim)
+                elif g2.edata[etype]["x"].ndim == 2 and g2.edata[etype]["x"].shape[1] != feat_dim:
+                    # 如果维度不匹配，可能需要截断或填充（这里假设是截断）
+                    current_dim = g2.edata[etype]["x"].shape[1]
+                    if current_dim > feat_dim:
+                        g2.edata[etype]["x"] = g2.edata[etype]["x"][:, :feat_dim]
+                    else:
+                        padding = torch.zeros((g2.edata[etype]["x"].shape[0], feat_dim - current_dim), 
+                                             dtype=torch.float32, device=g2.device)
+                        g2.edata[etype]["x"] = torch.cat([g2.edata[etype]["x"], padding], dim=1)
         new_graphs.append(g2)
     return new_graphs
 
@@ -146,39 +178,29 @@ def build_masked_views(
     view_to_remove: Dict[str, Dict[str, List[torch.Tensor]]],
 ) -> object:
     """
-    Returns a shallow-copied data object whose graph lists are replaced with edited versions.
+    Returns a shallow-copied data object with mask information instead of removing nodes.
+    This avoids DGL schema inconsistency issues.
     view_to_remove: {view: {"A": [idx...], "B": [idx...]}}
+    
+    Instead of removing nodes, we store mask information in the data object,
+    which will be used to mask attention in the model.
     """
     d2 = copy.copy(data)
 
-    def _set(attr: str, val):
-        if hasattr(d2, attr):
-            setattr(d2, attr, val)
-
+    # Initialize mask dictionaries if they don't exist
+    if not hasattr(d2, 'frag_masks'):
+        d2.frag_masks = {}
+    
     for view, sides in view_to_remove.items():
-        if view == "brics":
-            gA, gB = _clone_graph_list(data.graph1), _clone_graph_list(data.graph2)
-            gA = _remove_p_nodes(gA, sides["A"])
-            gB = _remove_p_nodes(gB, sides["B"])
-            _set("graph1", gA)
-            _set("graph2", gB)
-
-        elif view == "fg":
-            gA, gB = _clone_graph_list(data.graph1_fg), _clone_graph_list(data.graph2_fg)
-            gA = _remove_p_nodes(gA, sides["A"])
-            gB = _remove_p_nodes(gB, sides["B"])
-            _set("graph1_fg", gA)
-            _set("graph2_fg", gB)
-
-        elif view == "murcko":
-            gA, gB = _clone_graph_list(data.graph1_murcko), _clone_graph_list(data.graph2_murcko)
-            gA = _remove_p_nodes(gA, sides["A"])
-            gB = _remove_p_nodes(gB, sides["B"])
-            _set("graph1_murcko", gA)
-            _set("graph2_murcko", gB)
-
-        else:
-            raise KeyError(f"Unknown view: {view}")
+        # Store mask information instead of removing nodes
+        # The mask will be applied to valid_a/valid_b in the model
+        d2.frag_masks[view] = {
+            "A": sides["A"],  # List of tensors, each tensor contains indices to mask
+            "B": sides["B"]
+        }
+    
+    # Keep original graphs unchanged (no node removal)
+    # The model will use frag_masks to mask attention
 
     return d2
 
@@ -252,9 +274,20 @@ def eval_fidelity(
             view_to_remove_keep = {}
 
             # For each view, compute Top-K separately (fragments differ across views)
-            for view, attn in extra_per_view.items():
-                # attn is either None or {"B2A":..., "A2B":...}
-                if attn is None:
+            for view, attn_data in extra_per_view.items():
+                # attn_data 可能是两种格式：
+                # 1. 新格式: {"attn": {"B2A":..., "A2B":...}, "valid_a": ..., "valid_b": ...}
+                # 2. 旧格式: {"B2A":..., "A2B":...} 或 None
+                if attn_data is None:
+                    continue
+                
+                # 提取注意力字典
+                if isinstance(attn_data, dict) and "attn" in attn_data:
+                    attn = attn_data["attn"]  # 新格式
+                else:
+                    attn = attn_data  # 旧格式
+                
+                if attn is None or not isinstance(attn, dict):
                     continue
 
                 # We need sizes (#fragment nodes) for each sample in the current batch under THIS view.

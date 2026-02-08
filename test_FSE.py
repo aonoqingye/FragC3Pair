@@ -17,7 +17,7 @@ from sklearn.metrics import (
     accuracy_score,
     precision_score,
 )
-from torch_geometric.loader import DataLoader
+from torch_geometric.data import DataLoader
 
 from explainer import save_cross_attn_pairlines, save_group_montage_by_pair
 from tools.fidelity_utils import eval_fidelity
@@ -322,10 +322,8 @@ def main():
         out_info = f'{args.dataset}_{args.encoder}_Frags{"_".join(args.frag_list)}_Group{args.groups}'
         ckpt_path = os.path.join(args.ckpt_dir, f"{out_info}_fold_{fold}_best.pt")
         if not (os.path.exists(ckpt_path) and os.path.isfile(ckpt_path)):
-            raise FileNotFoundError(
-                f"[CKPT Not Found] Expected checkpoint at:\n  {ckpt_path}\n"
-                f"Tips: 先完成该 fold 训练并保存 *_best.pt"
-            )
+            log(f"[Skip] Checkpoint not found: {ckpt_path}, skipping fold {fold}")
+            continue
         ckpt = torch.load(ckpt_path, map_location="cpu")
         # robust load: accept either {"model": state_dict} or raw state_dict
         state_dict = ckpt.get("model_state_dict")
@@ -353,27 +351,39 @@ def main():
             print(f"Test MSE: {test_mse:.4f}")
 
         # -----------------------------
-        # 测试后：按任务类型筛选“最接近真实标签”的前 visualize_n 个样本并画图
+        # 测试后：按任务类型筛选"最接近真实标签"的前 visualize_n 个样本并画图
         # -----------------------------
         length = len(T)
-        # ---- 计算误差（归一化相对误差）----
+        # ---- 计算误差（根据任务类型选择不同的误差度量）----
         T_arr = np.asarray(T, dtype=float)
         S_arr = np.asarray(S, dtype=float)
-        epsilon = 1e-8
-        abs_err = np.abs(S_arr - T_arr)  # |ŷ - y|
-        rel_err = abs_err / (np.abs(T_arr) + epsilon)  # |ŷ - y| / (|y|+eps)
+        
+        if task_type == "classification":
+            # 分类任务：使用预测概率与真实标签的绝对误差
+            # T 是标签（0或1），S 是正类概率（0到1之间）
+            abs_err = np.abs(S_arr - T_arr)  # |P(y=1) - y_true|
+            # 对于分类任务，不使用相对误差（因为当T=0时会导致分母过小）
+            # 直接使用绝对误差作为排序依据
+            rel_err = abs_err  # 分类任务中，rel_err 实际上就是 abs_err
+        else:
+            # 回归任务：使用归一化相对误差
+            epsilon = 1e-8
+            abs_err = np.abs(S_arr - T_arr)  # |ŷ - y|
+            rel_err = abs_err / (np.abs(T_arr) + epsilon)  # |ŷ - y| / (|y|+eps)
 
-        # ---- 构造“药物对”分组键 (drug1_id, drug2_id) ----
-        drug_ids_a_all = np.asarray(dataset.drug1_id) if hasattr(dataset, "drug1_id") else None
-        drug_ids_b_all = np.asarray(dataset.drug2_id) if hasattr(dataset, "drug2_id") else None
+        # ---- 构造"药物对"分组键 (drug1_id, drug2_id) ----
+        # 使用 pairs_data.data 而不是 dataset（dataset是字符串"ONeil"）
+        drug_ids_a_all = np.asarray(pairs_data.data.drug1_id) if hasattr(pairs_data.data, "drug1_id") else None
+        drug_ids_b_all = np.asarray(pairs_data.data.drug2_id) if hasattr(pairs_data.data, "drug2_id") else None
 
         def _pair_for_gidx(gi: int):
             if drug_ids_a_all is not None and drug_ids_b_all is not None:
                 return (str(drug_ids_a_all[gi]), str(drug_ids_b_all[gi]))
             return (str(gi), str(gi))
 
-        # ====== 新增：在样本选择前先检查是否已有索引文件 ======
-        attn_out_dir = os.path.join(work_dir, "attn_pair")
+        # ====== 根据数据集和配置创建不同的输出目录，避免文件覆盖 ======
+        # 使用 out_info 来创建唯一的输出目录
+        attn_out_dir = os.path.join(work_dir, "attn_pair", out_info, f"fold_{fold}")
         os.makedirs(attn_out_dir, exist_ok=True)
         sel_idx_path = os.path.join(attn_out_dir, "selected_indices.txt")
 
@@ -383,12 +393,13 @@ def main():
         if os.path.exists(sel_idx_path) and args.cell_attn == False:
             # 已有索引文件，直接读取并跳过选择
             try:
-                loaded = np.loadtxt(sel_idx_path, dtype=int, ndmin=1)
+                loaded = np.loadtxt(sel_idx_path, dtype=int, ndmin=1, comments='#')
                 # 兼容只有单个值时的形状
                 selected_global_idx = np.asarray(loaded, dtype=np.int64).reshape(-1)
                 log(f"Loaded {len(selected_global_idx)} indices from existing file: selected_indices.txt")
             except Exception as e:
                 log(f"Failed to load existing indices, will re-select. Reason: {type(e).__name__}: {e}")
+                selected_global_idx = None
 
         # 若没有预存索引，才执行分组筛选逻辑
         if selected_global_idx is None:
@@ -441,19 +452,57 @@ def main():
 
         log(f"Visualizing {len(selected_global_idx)} samples from top groups...")
 
-        data_batch = dataset[selected_global_idx]
+        # 确保selected_global_idx是正确的整数列表
+        if isinstance(selected_global_idx, np.ndarray):
+            selected_global_idx = selected_global_idx.astype(np.int64).tolist()
+        elif isinstance(selected_global_idx, (list, tuple)):
+            selected_global_idx = [int(x) for x in selected_global_idx]
+        else:
+            selected_global_idx = [int(selected_global_idx)]
+        # 使用pairs_data而不是dataset（dataset是字符串"ONeil"）
+        data_batch = pairs_data[selected_global_idx]
         batch_loader = DataLoader(data_batch, batch_size=len(data_batch))
         for _, batch in enumerate(batch_loader):
             output_b, extra_b, agg_attn = model(batch.to(device), return_attn=True)
 
         # 4) 组装批量标签与标识
         y_b = data_batch.y.view(-1)  # [B]
-        cell_id_b = [str(dataset.cell_id[i]) if hasattr(dataset, "cell_id") else ""
+        # 使用 pairs_data.data 而不是 dataset（dataset是字符串"ONeil"）
+        cell_id_b = [str(pairs_data.data.cell_id[i]) if hasattr(pairs_data.data, "cell_id") else ""
                      for i in selected_global_idx]
-        drug_id_a_b = [str(dataset.drug1_id[i]) for i in selected_global_idx]
-        drug_id_b_b = [str(dataset.drug2_id[i]) for i in selected_global_idx]
+        drug_id_a_b = [str(pairs_data.data.drug1_id[i]) for i in selected_global_idx]
+        drug_id_b_b = [str(pairs_data.data.drug2_id[i]) for i in selected_global_idx]
 
         # 6) 一次性可视化（visualize_n=批量大小）
+        # 根据数据集名称确定 drug_id.csv 路径和列名
+        # 不同数据集可能有不同的文件名和列名
+        if args.dataset == "ONeil":
+            smiles_csv_path = os.path.join(data_dir, args.dataset, "drug_id.csv")
+            smiles_drug_col = "drug"
+            smiles_smi_col = "smiles"
+        elif args.dataset == "ALMANAC":
+            smiles_csv_path = os.path.join(data_dir, args.dataset, "drug_smiles.csv")
+            smiles_drug_col = "name"  # ALMANAC 使用 "name" 作为 drug ID
+            smiles_smi_col = "isosmiles"  # ALMANAC 使用 "isosmiles" 作为 SMILES
+        elif args.dataset == "DrugComb":
+            # DrugComb 可能需要从 pkl 文件中提取，或者使用其他文件
+            # 先尝试查找可能的文件
+            smiles_csv_path = os.path.join(data_dir, args.dataset, "drug_id.csv")
+            if not os.path.exists(smiles_csv_path):
+                smiles_csv_path = os.path.join(data_dir, args.dataset, "drug_smiles.csv")
+            smiles_drug_col = "drug"
+            smiles_smi_col = "smiles"
+        else:
+            smiles_csv_path = os.path.join(data_dir, args.dataset, "drug_id.csv")
+            smiles_drug_col = "drug"
+            smiles_smi_col = "smiles"
+        
+        if not os.path.exists(smiles_csv_path):
+            # 如果不存在，尝试其他可能的路径
+            smiles_csv_path = os.path.join(data_dir, "data", "drug_id.csv")
+            smiles_drug_col = "drug"
+            smiles_smi_col = "smiles"
+        
         group_ae, group_re = save_cross_attn_pairlines(
             y=y_b,  # [B]
             output=output_b,  # [B, C] 或 [B, 1]
@@ -465,7 +514,11 @@ def main():
             idx=selected_global_idx,
             visualize_n=len(selected_global_idx),
             with_cell=args.cell_attn,
-            out_dir=attn_out_dir
+            out_dir=attn_out_dir,
+            smiles_csv=smiles_csv_path,  # 指定正确的路径
+            smiles_drug_col=smiles_drug_col,  # 指定 drug ID 列名
+            smiles_smi_col=smiles_smi_col,  # 指定 SMILES 列名
+            call_llm=False  # 禁用 LLM 调用，避免需要 API key
         )
         log(f"Batched visualization done (B={len(selected_global_idx)}).\n")
         # 若开启按药物对聚合拼图：把同组样本上下并排到一张图里（每个药物对一张）
@@ -536,6 +589,8 @@ def parse_args():
     p.add_argument('--visualize_n', type=int, default=8, help='Number of test pairs to visualize')
     p.add_argument('--group_visualize', type=bool, default=True,
                    help='在批量单图绘制后，按药物对把同组样本上下拼接成一张图')
+    p.add_argument("--cell_attn", type=bool, default=False,
+                   help="是否在可视化中包含细胞系注意力")
     # 数据与设备
     p.add_argument("--dataset", type=str, default="ONeil",
                    choices=["ALMANAC", "DrugComb", "ONeil"], help="数据集前缀名（ONeil 自动切换为二分类）")
